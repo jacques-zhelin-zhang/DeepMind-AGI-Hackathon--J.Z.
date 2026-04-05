@@ -1,0 +1,5 @@
+# Core dependencies (kaggle-benchmarks is pre-installed on Kaggle)
+pandas>=2.0.0
+
+# For local testing only (not needed on Kaggle)
+# kaggle-benchmarks  # install from: pip install kaggle-benchmarks
