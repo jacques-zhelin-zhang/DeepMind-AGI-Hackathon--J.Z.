@@ -13,7 +13,7 @@ Usage on Kaggle:
   3. Run all cells
   4. In the final cell, use: %choose veridical_worlds
 
-Author: [Your Name]
+Author: Zhelin Zhang
 Competition: Measuring Progress Toward AGI - Cognitive Abilities
 Track: Metacognition (primary) + Learning (secondary)
 """
@@ -186,18 +186,16 @@ def run_veridical_benchmark(llm, seed: int, complexity: int) -> Dict:
     response2 = llm.prompt(TURN2_HYPOTHESIS)
     all_responses["turn2_hypothesis"] = response2
 
-    # Score rule discovery
+    # Score rule discovery (now uses structural parameter matching)
     rule_score = scorer.score_rule_discovery(response2)
 
-    # Extract initial confidences for calibration
     # Determine which hypotheses were correct for calibration scoring
-    initial_confidences = response2
     hypothesis_correct = []
     for law in ground_truth["laws"]:
-        match_score = scorer._match_law(
+        match_score = scorer._structural_match_law(
             response2.lower(), law["law_type"], law["parameters"]
         )
-        hypothesis_correct.append(match_score > 0.5)
+        hypothesis_correct.append(match_score > 0.4)
 
     calibration_t2 = scorer.score_calibration(response2, hypothesis_correct)
 
@@ -279,19 +277,23 @@ def run_veridical_benchmark(llm, seed: int, complexity: int) -> Dict:
     response6 = llm.prompt(turn6_prompt)
     all_responses["turn6_synthesis"] = response6
 
-    # Score hallucination control and tool efficiency
+    # Score hallucination control (now with claim-evidence linking)
     hallucination_score = scorer.score_hallucination_control(response6, tool_calls_log)
     n_claims = len(scorer._extract_claims(response6))
     tool_score = scorer.score_tool_efficiency(tool_calls_log, n_claims)
 
-    # Final calibration from Turn 6 predictions
-    # (Using Turn 2 calibration as primary since Turn 6 is harder to auto-score)
+    # Score numerical accuracy on quantitative challenges
+    quant_challenges = universe.generate_quantitative_challenges()
+    numerical_score = scorer.score_numerical_accuracy(response6, quant_challenges)
+
+    # Final calibration from Turn 2
     calibration_score = calibration_t2
 
     # --- Composite Score ---
     composite = scorer.compute_composite(
         rule_score, prediction_score, calibration_score,
         belief_score, hallucination_score, tool_score,
+        numerical_score,
     )
 
     return {

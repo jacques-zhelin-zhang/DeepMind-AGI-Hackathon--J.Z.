@@ -8,7 +8,7 @@ and epistemic discipline in frontier LLMs.
 The parameter space exceeds 10^15 unique configurations, making
 memorization impossible and forcing genuine in-context reasoning.
 
-Author: [Your Name]
+Author: Zhelin Zhang
 License: Apache 2.0
 """
 
@@ -31,6 +31,9 @@ class LawType(Enum):
     CAUSAL_CHAIN = "causal_chain"
     DECAY = "decay"
     FIELD_EFFECT = "field_effect"
+    INVERSE_SQUARE = "inverse_square"
+    OSCILLATION = "oscillation"
+    NONLINEAR_MOTION = "nonlinear_motion"
 
 
 @dataclass
@@ -111,6 +114,7 @@ class MicroUniverse:
         self.laws: List[PhysicalLaw] = []
         self.history: List[UniverseState] = []
         self.grid_size = 20.0
+        self.pending_causal: List[Tuple[int, Dict]] = []  # (trigger_step, effect_params)
 
         self._generate_laws()
         self._generate_initial_state()
@@ -118,8 +122,15 @@ class MicroUniverse:
     # ── Law Generation ────────────────────────────────────────────────────
 
     def _generate_laws(self):
-        """Generate a set of hidden physical laws from parameterized templates."""
-        law_generators = [
+        """Generate a set of hidden physical laws from parameterized templates.
+
+        Difficulty gating:
+          complexity 3-4: linear physics only (original 7 law types)
+          complexity 5-6: adds inverse_square OR oscillation
+          complexity 7:   adds all nonlinear types
+        """
+        # Base generators (linear physics)
+        base_generators = [
             self._gen_motion_law,
             self._gen_interaction_law,
             self._gen_conservation_law,
@@ -129,13 +140,35 @@ class MicroUniverse:
             self._gen_field_effect_law,
         ]
 
+        # Nonlinear generators gated by complexity
+        nonlinear_generators = []
+        if self.complexity >= 5:
+            # Medium-hard: add one nonlinear type
+            nonlinear_generators.append(
+                self.rng.choice([self._gen_inverse_square_law, self._gen_oscillation_law])
+            )
+        if self.complexity >= 7:
+            # Hard: add all nonlinear types
+            nonlinear_generators = [
+                self._gen_inverse_square_law,
+                self._gen_oscillation_law,
+                self._gen_nonlinear_motion_law,
+            ]
+
         # Always include at least one motion and one interaction law
         self.laws.append(self._gen_motion_law())
         self.laws.append(self._gen_interaction_law())
 
+        # For complexity >= 5, guarantee at least one nonlinear law
+        if nonlinear_generators:
+            gen = self.rng.choice(nonlinear_generators)
+            self.laws.append(gen())
+            remaining = self.complexity - 3
+        else:
+            remaining = self.complexity - 2
+
         # Fill remaining slots from the full pool
-        remaining = self.complexity - 2
-        available = list(law_generators)
+        available = base_generators + nonlinear_generators
         for _ in range(remaining):
             gen = self.rng.choice(available)
             self.laws.append(gen())
@@ -275,6 +308,77 @@ class MicroUniverse:
             law_id="",
         )
 
+    def _gen_inverse_square_law(self) -> PhysicalLaw:
+        """Pairwise gravitational or electromagnetic force: F = G * q1 * q2 / r^2."""
+        force_constant = round(self.rng.uniform(0.05, 0.5), 3)
+        applies_to = self.rng.choice(["mass", "charge"])
+        cutoff_radius = round(self.rng.uniform(1.0, 3.0), 2)
+        attractive = self.rng.choice([True, False])
+        return PhysicalLaw(
+            law_type=LawType.INVERSE_SQUARE,
+            parameters={
+                "force_constant": force_constant,
+                "applies_to": applies_to,
+                "cutoff_radius": cutoff_radius,
+                "attractive": attractive,
+            },
+            description=(
+                f"{'Attractive' if attractive else 'Repulsive'} inverse-square force "
+                f"based on {applies_to}: F = {'-' if attractive else '+'}{force_constant} "
+                f"* {applies_to}1 * {applies_to}2 / r^2 (cutoff r>{cutoff_radius})"
+            ),
+            law_id="",
+        )
+
+    def _gen_oscillation_law(self) -> PhysicalLaw:
+        """Restoring force toward equilibrium: F = -k * (pos - eq)."""
+        spring_k = round(self.rng.uniform(0.02, 0.2), 3)
+        eq_x = round(self.rng.uniform(5.0, 15.0), 2)
+        eq_y = round(self.rng.uniform(5.0, 15.0), 2)
+        damping = round(self.rng.uniform(0.9, 0.99), 3)
+        applies_to = self.rng.choice(["all", "charged", "heavy"])
+        return PhysicalLaw(
+            law_type=LawType.OSCILLATION,
+            parameters={
+                "spring_constant": spring_k,
+                "equilibrium_x": eq_x,
+                "equilibrium_y": eq_y,
+                "damping": damping,
+                "applies_to": applies_to,
+            },
+            description=(
+                f"Restoring force on {applies_to} entities toward ({eq_x},{eq_y}) "
+                f"with spring constant k={spring_k}, damping={damping}"
+            ),
+            law_id="",
+        )
+
+    def _gen_nonlinear_motion_law(self) -> PhysicalLaw:
+        """Nonlinear velocity update: dv = a*mass^2 + b*log(energy+1) + c*charge^2."""
+        formula = self.rng.choice(["quadratic", "logarithmic"])
+        a = round(self.rng.uniform(-0.1, 0.1), 4)
+        b = round(self.rng.uniform(-0.3, 0.3), 4)
+        c = round(self.rng.uniform(-0.15, 0.15), 4)
+        axis = self.rng.choice(["x", "y", "both"])
+        return PhysicalLaw(
+            law_type=LawType.NONLINEAR_MOTION,
+            parameters={
+                "formula": formula,
+                "a": a,
+                "b": b,
+                "c": c,
+                "axis": axis,
+            },
+            description=(
+                f"Nonlinear ({formula}) velocity update on {axis}: "
+                f"dv = {a}*mass^2 + {b}*log(energy+1) + {c}*charge^2"
+                if formula == "quadratic" else
+                f"Nonlinear ({formula}) velocity update on {axis}: "
+                f"dv = {a}*exp(mass/5) + {b}*sqrt(|charge|+0.1) + {c}"
+            ),
+            law_id="",
+        )
+
     # ── Initial State Generation ──────────────────────────────────────────
 
     def _generate_initial_state(self):
@@ -359,6 +463,80 @@ class MicroUniverse:
                         e.energy = round(max(0, e.energy + delta), 4)
                     elif p["effect_on"] == "charge":
                         e.charge = round(e.charge + delta * 0.1, 4)
+
+        # Apply inverse-square forces (N-body pairwise)
+        MAX_ACCEL = 2.0  # cap to prevent numerical explosion
+        for law in self.laws:
+            if law.law_type == LawType.INVERSE_SQUARE:
+                p = law.parameters
+                for i_idx, e1 in enumerate(entities):
+                    if not e1.alive:
+                        continue
+                    ax, ay = 0.0, 0.0
+                    for j_idx, e2 in enumerate(entities):
+                        if i_idx == j_idx or not e2.alive:
+                            continue
+                        dx = e2.x - e1.x
+                        dy = e2.y - e1.y
+                        r_sq = dx * dx + dy * dy
+                        r = math.sqrt(r_sq)
+                        if r < 0.5:
+                            r = 0.5  # softening to prevent singularity
+                            r_sq = 0.25
+                        if r > p["cutoff_radius"] * 5:
+                            continue  # far-field cutoff
+                        q1 = e1.mass if p["applies_to"] == "mass" else e1.charge
+                        q2 = e2.mass if p["applies_to"] == "mass" else e2.charge
+                        force_mag = p["force_constant"] * q1 * q2 / r_sq
+                        sign = -1.0 if p["attractive"] else 1.0
+                        fx = sign * force_mag * dx / r
+                        fy = sign * force_mag * dy / r
+                        ax += fx / max(e1.mass, 0.1)
+                        ay += fy / max(e1.mass, 0.1)
+                    ax = max(-MAX_ACCEL, min(MAX_ACCEL, ax))
+                    ay = max(-MAX_ACCEL, min(MAX_ACCEL, ay))
+                    e1.vx = round(e1.vx + ax, 4)
+                    e1.vy = round(e1.vy + ay, 4)
+
+        # Apply oscillation (restoring force toward equilibrium)
+        for law in self.laws:
+            if law.law_type == LawType.OSCILLATION:
+                p = law.parameters
+                for e in entities:
+                    if not e.alive:
+                        continue
+                    applies = (
+                        p["applies_to"] == "all"
+                        or (p["applies_to"] == "charged" and abs(e.charge) > 0.1)
+                        or (p["applies_to"] == "heavy" and e.mass > 2.5)
+                    )
+                    if not applies:
+                        continue
+                    dx = e.x - p["equilibrium_x"]
+                    dy = e.y - p["equilibrium_y"]
+                    e.vx = round(e.vx * p["damping"] - p["spring_constant"] * dx, 4)
+                    e.vy = round(e.vy * p["damping"] - p["spring_constant"] * dy, 4)
+
+        # Apply nonlinear motion laws
+        for law in self.laws:
+            if law.law_type == LawType.NONLINEAR_MOTION:
+                p = law.parameters
+                for e in entities:
+                    if not e.alive:
+                        continue
+                    if p["formula"] == "quadratic":
+                        dv = (p["a"] * e.mass ** 2
+                              + p["b"] * math.log(e.energy + 1)
+                              + p["c"] * e.charge ** 2)
+                    else:  # logarithmic/exponential
+                        dv = (p["a"] * math.exp(min(e.mass / 5, 3))
+                              + p["b"] * math.sqrt(abs(e.charge) + 0.1)
+                              + p["c"])
+                    dv = max(-MAX_ACCEL, min(MAX_ACCEL, dv))
+                    if p["axis"] in ("x", "both"):
+                        e.vx = round(e.vx + dv, 4)
+                    if p["axis"] in ("y", "both"):
+                        e.vy = round(e.vy + dv, 4)
 
         # Move entities
         for e in entities:
@@ -532,11 +710,11 @@ class MicroUniverse:
                         for e in alive:
                             e.charge = round(e.charge + per_entity, 4)
 
-        # Apply causal chain laws (deferred effects stored per-instance)
+        # Apply causal chain laws — queue deferred effects with actual delays
+        current_step = state.timestep + 1
         for law in self.laws:
             if law.law_type == LawType.CAUSAL_CHAIN:
                 p = law.parameters
-                # Check if trigger event occurred
                 triggered = False
                 for ev in events:
                     if p["trigger_event"] == "collision" and "bounced" in ev:
@@ -546,22 +724,34 @@ class MicroUniverse:
                     elif p["trigger_event"] == "threshold_crossed" and "threshold" in ev:
                         triggered = True
                 if triggered and self.rng.random() < p["probability"]:
-                    # Simplified: apply effect immediately (delay approximated)
-                    alive = [e for e in entities if e.alive]
-                    if p["effect"] == "field_pulse":
-                        new_global_field = round(new_global_field + 0.5, 4)
-                        events.append("Causal: field pulse triggered")
-                    elif p["effect"] == "energy_redistribution":
-                        if alive:
-                            total_e = sum(e.energy for e in alive)
-                            avg_e = total_e / len(alive)
-                            for e in alive:
-                                e.energy = round(avg_e, 4)
-                            events.append("Causal: energy redistributed")
-                    elif p["effect"] == "mass_shift":
+                    fire_at = current_step + p["delay_steps"]
+                    self.pending_causal.append((fire_at, p))
+                    events.append(
+                        f"Causal: {p['effect']} queued (fires at step {fire_at})"
+                    )
+
+        # Process any pending causal effects that are due this step
+        still_pending = []
+        for fire_step, effect_params in self.pending_causal:
+            if fire_step <= current_step:
+                alive = [e for e in entities if e.alive]
+                if effect_params["effect"] == "field_pulse":
+                    new_global_field = round(new_global_field + 0.5, 4)
+                    events.append("Causal: field pulse fired")
+                elif effect_params["effect"] == "energy_redistribution":
+                    if alive:
+                        total_e = sum(e.energy for e in alive)
+                        avg_e = total_e / len(alive)
                         for e in alive:
-                            e.mass = round(e.mass * 1.1, 4)
-                        events.append("Causal: mass shift triggered")
+                            e.energy = round(avg_e, 4)
+                        events.append("Causal: energy redistributed")
+                elif effect_params["effect"] == "mass_shift":
+                    for e in alive:
+                        e.mass = round(e.mass * 1.1, 4)
+                    events.append("Causal: mass shift fired")
+            else:
+                still_pending.append((fire_step, effect_params))
+        self.pending_causal = still_pending
 
         alive_entities = [e for e in entities if e.alive]
         new_state = UniverseState(
@@ -601,10 +791,25 @@ class MicroUniverse:
             last = self.history[-1]
             return json.dumps({"alive_entities": len([e for e in last.entities if e.alive])})
 
+        if "inverse" in param_lower or "gravity" in param_lower or "electromagnetic" in param_lower:
+            for law in self.laws:
+                if law.law_type == LawType.INVERSE_SQUARE:
+                    results[law.law_id] = law.to_dict()
+
+        if "oscillat" in param_lower or "spring" in param_lower or "restor" in param_lower:
+            for law in self.laws:
+                if law.law_type == LawType.OSCILLATION:
+                    results[law.law_id] = law.to_dict()
+
+        if "nonlinear" in param_lower or "quadratic" in param_lower or "logarithm" in param_lower:
+            for law in self.laws:
+                if law.law_type == LawType.NONLINEAR_MOTION:
+                    results[law.law_id] = law.to_dict()
+
         if results:
             return json.dumps(results, indent=2)
 
-        return json.dumps({"error": "Parameter not found. Try: 'motion laws', 'interaction laws', 'all laws', 'entity count', 'law count'."})
+        return json.dumps({"error": "Parameter not found. Try: 'motion laws', 'interaction laws', 'all laws', 'inverse square', 'oscillation', 'nonlinear', 'entity count', 'law count'."})
 
     def simulate_forward(self, steps: int = 5) -> str:
         """Tool: Run the physics engine forward from the current state."""
@@ -644,6 +849,24 @@ class MicroUniverse:
                     product = law.parameters["decay_product"]
                     if product in claim_lower:
                         return json.dumps({"claim": claim, "result": True})
+
+            if law.law_type == LawType.INVERSE_SQUARE:
+                if "inverse" in claim_lower and ("square" in claim_lower or "gravity" in claim_lower):
+                    applies = law.parameters["applies_to"]
+                    if applies in claim_lower:
+                        return json.dumps({"claim": claim, "result": True})
+                    if "attractive" in claim_lower and law.parameters["attractive"]:
+                        return json.dumps({"claim": claim, "result": True})
+                    if "repulsive" in claim_lower and not law.parameters["attractive"]:
+                        return json.dumps({"claim": claim, "result": True})
+
+            if law.law_type == LawType.OSCILLATION:
+                if "oscillat" in claim_lower or "spring" in claim_lower or "restor" in claim_lower:
+                    return json.dumps({"claim": claim, "result": True})
+
+            if law.law_type == LawType.NONLINEAR_MOTION:
+                if "nonlinear" in claim_lower or "quadratic" in claim_lower:
+                    return json.dumps({"claim": claim, "result": True})
 
         # Check numerical claims about current state
         last = self.history[-1]
@@ -729,6 +952,87 @@ class MicroUniverse:
         self.rng.setstate(saved_rng_state)
 
         return initial.to_dict(), actual_outcomes
+
+    def generate_quantitative_challenges(self) -> List[Tuple[str, float]]:
+        """Generate quantitative questions with exact numerical answers.
+
+        Returns list of (question_str, ground_truth_answer) tuples.
+        """
+        challenges = []
+        last = self.history[-1]
+        alive = [e for e in last.entities if e.alive]
+
+        # Q1: Interaction radius (if interaction law exists)
+        for law in self.laws:
+            if law.law_type == LawType.INTERACTION:
+                challenges.append((
+                    "What is the interaction distance threshold?",
+                    law.parameters["threshold_distance"],
+                ))
+                break
+
+        # Q2: Total kinetic energy after N steps
+        import copy
+        saved_history = self.history
+        saved_rng = self.rng.getstate()
+        self.history = [copy.deepcopy(last)]
+        future = self.simulate(3)
+        ke_3steps = future[-1].total_energy
+        self.history = saved_history
+        self.rng.setstate(saved_rng)
+        challenges.append((
+            "What will the total energy be after 3 more timesteps?",
+            round(ke_3steps, 2),
+        ))
+
+        # Q3: Number of alive entities after 5 steps
+        saved_history = self.history
+        saved_rng = self.rng.getstate()
+        self.history = [copy.deepcopy(last)]
+        future = self.simulate(5)
+        alive_5 = len([e for e in future[-1].entities if e.alive])
+        self.history = saved_history
+        self.rng.setstate(saved_rng)
+        challenges.append((
+            "How many entities will be alive after 5 more timesteps?",
+            float(alive_5),
+        ))
+
+        # Q4: Conservation law leak rate (if exists)
+        for law in self.laws:
+            if law.law_type == LawType.CONSERVATION:
+                challenges.append((
+                    f"What is the leak rate for {law.parameters['conserved_quantity']} conservation?",
+                    law.parameters["leak_rate"],
+                ))
+                break
+
+        # Q5: Inverse square force constant (if exists)
+        for law in self.laws:
+            if law.law_type == LawType.INVERSE_SQUARE:
+                challenges.append((
+                    f"What is the force constant for the inverse-square law?",
+                    law.parameters["force_constant"],
+                ))
+                break
+
+        # Q6: Spring constant (if oscillation exists)
+        for law in self.laws:
+            if law.law_type == LawType.OSCILLATION:
+                challenges.append((
+                    "What is the spring constant of the restoring force?",
+                    law.parameters["spring_constant"],
+                ))
+                break
+
+        # Ensure at least 3 challenges
+        if len(challenges) < 3:
+            challenges.append((
+                f"How many hidden laws govern this universe?",
+                float(len(self.laws)),
+            ))
+
+        return challenges[:5]
 
     def generate_disconfirming_scenario(self) -> Tuple[Dict, List[Dict], str]:
         """
